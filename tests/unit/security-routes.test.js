@@ -1,5 +1,6 @@
 const request = require('supertest');
 const app = require('../../src/app');
+const sequelize = require('../../src/config/database');
 
 describe('security boundaries', () => {
   test('protected consultation endpoints reject anonymous requests', async () => {
@@ -17,7 +18,9 @@ describe('security boundaries', () => {
   });
 
   test('readiness reports database failure without exposing details', async () => {
+    const authenticate = jest.spyOn(sequelize, 'authenticate').mockRejectedValue(new Error('database connection refused'));
     const response = await request(app).get('/health/ready');
+    authenticate.mockRestore();
 
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe('DATABASE_UNAVAILABLE');
