@@ -1,0 +1,12 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = process.env.PORT || '3001';
+process.env.DB_HOST = process.env.DB_HOST || '127.0.0.1';
+process.env.DB_PORT = process.env.DB_PORT || '3306';
+process.env.DB_NAME = process.env.DB_NAME || 'amrutam_telemedicine';
+process.env.TEST_DB_NAME = process.env.TEST_DB_NAME || 'amrutam_telemedicine_test';
+process.env.DB_USER = process.env.DB_USER || 'root';
+process.env.DB_PASSWORD = process.env.DB_PASSWORD || 'test_only_password';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-secret-with-at-least-32-characters';
+process.env.APP_ENCRYPTION_KEY = process.env.APP_ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.METRICS_TOKEN = process.env.METRICS_TOKEN || 'test-only-metrics-token-with-at-least-32-characters';
+process.env.LOG_LEVEL = 'silent';

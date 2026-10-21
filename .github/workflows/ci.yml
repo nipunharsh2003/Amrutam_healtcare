@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: test_password
+          MYSQL_DATABASE: amrutam_telemedicine_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptest_password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run db:migrate -- --env test
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: amrutam_telemedicine
+          TEST_DB_NAME: amrutam_telemedicine_test
+          DB_USER: root
+          DB_PASSWORD: test_password
+      - run: npm test
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: amrutam_telemedicine
+          TEST_DB_NAME: amrutam_telemedicine_test
+          DB_USER: root
+          DB_PASSWORD: test_password
+          JWT_SECRET: ci-only-secret-value-at-least-32-characters-long
+          APP_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          METRICS_TOKEN: ci-only-metrics-token-at-least-32-characters
+          RUN_DB_INTEGRATION: 'true'
+      - run: docker build -t amrutam-api:test .

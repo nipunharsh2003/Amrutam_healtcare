@@ -1,0 +1,401 @@
+openapi: 3.0.3
+info:
+  title: Amrutam Telemedicine API
+  version: 1.0.0
+  description: REST API for the Node.js, Express, and MySQL telemedicine backend.
+servers:
+  - url: http://localhost:3000/api/v1
+tags:
+  - { name: Auth }
+  - { name: Doctors }
+  - { name: Availability }
+  - { name: Consultations }
+  - { name: Prescriptions }
+  - { name: Admin }
+paths:
+  /health/live:
+    get:
+      servers: [{ url: http://localhost:3000 }]
+      summary: Liveness probe independent of MySQL
+      responses:
+        '200': { description: Process is alive }
+  /health/ready:
+    get:
+      servers: [{ url: http://localhost:3000 }]
+      summary: Readiness probe checks MySQL connectivity
+      responses:
+        '200': { description: API and database are ready }
+        '503': { description: Database is unavailable }
+  /api/v1/health:
+    get:
+      servers: [{ url: http://localhost:3000 }]
+      summary: Versioned database health probe
+      responses:
+        '200': { description: Database connected }
+        '503': { description: Database unavailable }
+  /metrics:
+    get:
+      servers: [{ url: http://localhost:3000 }]
+      summary: Prometheus metrics (bearer token required)
+      security: [{ metricsBearer: [] }]
+      responses:
+        '200':
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema: { type: string }
+        '401': { description: Invalid or missing metrics token }
+        '404': { description: Metrics token is not configured }
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a patient (role is always PATIENT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password, firstName, lastName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12, maxLength: 72 }
+                firstName: { type: string, maxLength: 100 }
+                lastName: { type: string, maxLength: 100 }
+      responses:
+        '201': { description: Patient created }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Email already registered }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with password and optional TOTP code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                mfaCode: { type: string, pattern: '^\\d{6}$' }
+      responses:
+        '200': { description: Bearer JWT issued }
+        '401': { description: Invalid credentials or MFA failure }
+        '429': { description: Authentication rate limit exceeded }
+  /auth/me:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Get current user profile
+      responses:
+        '200': { description: Authenticated profile }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Update current user's profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                firstName: { type: string, maxLength: 100 }
+                lastName: { type: string, maxLength: 100 }
+                phone: { type: string, nullable: true, maxLength: 30 }
+      responses:
+        '200': { description: Updated profile }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/mfa/setup:
+    post:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Begin TOTP setup after password re-authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 12, maxLength: 72 }
+      responses:
+        '201': { description: TOTP secret and provisioning URI }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Verify TOTP and enable MFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^\\d{6}$' }
+      responses:
+        '200': { description: MFA-enabled JWT issued }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /doctors:
+    get:
+      tags: [Doctors]
+      summary: Search verified doctors
+      parameters:
+        - { in: query, name: name, schema: { type: string, maxLength: 120 } }
+        - { in: query, name: specialization, schema: { type: string, maxLength: 120 } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200': { description: Paginated doctor profiles }
+  /doctors/{doctorId}/slots:
+    get:
+      tags: [Doctors]
+      summary: Get open slots for a doctor on a UTC date
+      parameters:
+        - { $ref: '#/components/parameters/DoctorId' }
+        - { in: query, name: date, required: true, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Doctor and available slots }
+        '404': { description: Doctor not found }
+  /doctors/me/profile:
+    put:
+      tags: [Doctors]
+      security: [{ bearerAuth: [] }]
+      summary: Create or update own doctor profile (MFA required)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [specialization, licenseNumber]
+              properties:
+                specialization: { type: string, minLength: 2, maxLength: 120 }
+                bio: { type: string, nullable: true, maxLength: 5000 }
+                licenseNumber: { type: string, minLength: 3, maxLength: 100 }
+      responses:
+        '200': { description: Doctor profile }
+        '403': { description: Doctor role and MFA required }
+  /availability:
+    post:
+      tags: [Availability]
+      security: [{ bearerAuth: [] }]
+      summary: Add an availability slot (doctor/admin with MFA)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctorId, startsAt, endsAt]
+              properties:
+                doctorId: { type: string, format: uuid }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Slot created }
+        '409': { description: Slot overlaps existing availability }
+  /consultations:
+    get:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: List consultations scoped to current patient or doctor
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200': { description: Paginated consultations }
+    post:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: Book slot (patient only)
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId]
+              properties:
+                slotId: { type: string, format: uuid }
+      responses:
+        '201': { description: Consultation booked }
+        '200': { description: Idempotent replay }
+        '409': { description: Slot unavailable or key reused with changed payload }
+  /consultations/{consultationId}:
+    get:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: Get consultation if patient/doctor owns it
+      parameters:
+        - { $ref: '#/components/parameters/ConsultationId' }
+      responses:
+        '200': { description: Consultation }
+        '404': { description: Not found or inaccessible }
+  /consultations/{consultationId}/cancel:
+    post:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: Cancel eligible future booking (patient only)
+      parameters:
+        - { $ref: '#/components/parameters/ConsultationId' }
+      responses:
+        '200': { description: Cancelled and slot released }
+        '409': { description: Cancellation not allowed }
+  /consultations/{consultationId}/start:
+    post:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: Start assigned consultation (doctor with MFA)
+      parameters:
+        - { $ref: '#/components/parameters/ConsultationId' }
+      responses:
+        '200': { description: Consultation started }
+        '409': { description: Invalid state transition }
+  /consultations/{consultationId}/complete:
+    post:
+      tags: [Consultations]
+      security: [{ bearerAuth: [] }]
+      summary: Complete assigned consultation (doctor with MFA)
+      parameters:
+        - { $ref: '#/components/parameters/ConsultationId' }
+      responses:
+        '200': { description: Consultation completed }
+        '409': { description: Invalid state transition }
+  /prescriptions:
+    get:
+      tags: [Prescriptions]
+      security: [{ bearerAuth: [] }]
+      summary: List current patient's prescriptions
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200': { description: Paginated patient-owned prescriptions }
+  /prescriptions/{consultationId}:
+    post:
+      tags: [Prescriptions]
+      security: [{ bearerAuth: [] }]
+      summary: Issue prescription for assigned completed consultation (doctor with MFA)
+      parameters:
+        - { $ref: '#/components/parameters/ConsultationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [details]
+              properties:
+                details: { type: object, description: Validated clinical details, encrypted at rest by the application }
+      responses:
+        '201': { description: Prescription created }
+        '409': { description: Consultation is not completed }
+  /admin/analytics:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      summary: Read user/consultation aggregates (admin with MFA)
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: Counts by role, status, and date }
+        '403': { description: Admin role and MFA required }
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      summary: List audit events (admin with MFA)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200': { description: Paginated audit events }
+  /admin/doctors/{doctorId}/verification:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      summary: Verify or reject a doctor profile (admin with MFA)
+      parameters:
+        - { $ref: '#/components/parameters/DoctorId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verificationStatus]
+              properties:
+                verificationStatus: { type: string, enum: [VERIFIED, REJECTED] }
+      responses:
+        '200': { description: Verification state changed and audited }
+        '404': { description: Doctor not found }
+  /admin/users/{userId}/role:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      summary: Change user role (admin with MFA)
+      parameters:
+        - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [PATIENT, DOCTOR, ADMIN] }
+      responses:
+        '200': { description: Role changed and event audited }
+        '409': { description: Last administrator cannot be demoted }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    metricsBearer:
+      type: http
+      scheme: bearer
+  parameters:
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      in: query
+      name: pageSize
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    DoctorId:
+      in: path
+      name: doctorId
+      required: true
+      schema: { type: string, format: uuid }
+    ConsultationId:
+      in: path
+      name: consultationId
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Input validation failed
+    Unauthorized:
+      description: Authentication required
