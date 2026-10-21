@@ -10,11 +10,13 @@ const {
   IdempotencyKey,
   SlotReservation,
   AuditLog,
+  OutboxEvent,
 } = require('../models');
+const { withTransientRetry } = require('../../utils/withTransientRetry');
 
 const hashPayload = (payload) => crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 
-async function book(patientId, slotId, idempotencyKey) {
+async function bookOnce(patientId, slotId, idempotencyKey) {
   const requestHash = hashPayload({ slotId });
   const transaction = await sequelize.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED });
   try {
@@ -70,6 +72,13 @@ async function book(patientId, slotId, idempotencyKey) {
       endsAt: slot.endsAt,
     };
     await idempotency.update({ responseBody }, { transaction });
+    await OutboxEvent.create({
+      eventType: 'CONSULTATION_BOOKED',
+      aggregateType: 'CONSULTATION',
+      aggregateId: consultation.id,
+      payload: { consultationId: consultation.id, patientId, doctorId: doctor.id, slotId: slot.id },
+      availableAt: new Date(),
+    }, { transaction });
     await AuditLog.create({
       actorUserId: patientId,
       eventType: 'CONSULTATION_BOOKED',
@@ -93,6 +102,10 @@ async function book(patientId, slotId, idempotencyKey) {
     }
     throw error;
   }
+}
+
+function book(patientId, slotId, idempotencyKey) {
+  return withTransientRetry(() => bookOnce(patientId, slotId, idempotencyKey));
 }
 
 async function listForActor(actor, { page, pageSize, status }) {
@@ -157,6 +170,13 @@ async function cancel(actor, consultationId) {
       targetId: consultation.id,
       metadata: {},
     }, { transaction });
+    await OutboxEvent.create({
+      eventType: 'CONSULTATION_CANCELLED',
+      aggregateType: 'CONSULTATION',
+      aggregateId: consultation.id,
+      payload: { consultationId: consultation.id, patientId: actor.userId, doctorId: consultation.doctorId, slotId: slot.id },
+      availableAt: new Date(),
+    }, { transaction });
     return consultation;
   });
 }
@@ -185,6 +205,13 @@ async function transition(actor, consultationId, nextStatus) {
       targetType: 'CONSULTATION',
       targetId: consultation.id,
       metadata: { status: nextStatus },
+    }, { transaction });
+    await OutboxEvent.create({
+      eventType: `CONSULTATION_${nextStatus}`,
+      aggregateType: 'CONSULTATION',
+      aggregateId: consultation.id,
+      payload: { consultationId: consultation.id, patientId: consultation.patientId, doctorId: doctor.id },
+      availableAt: new Date(),
     }, { transaction });
     return consultation;
   });

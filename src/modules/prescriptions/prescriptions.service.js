@@ -2,7 +2,7 @@ const { Transaction } = require('sequelize');
 const sequelize = require('../../config/database');
 const ApiError = require('../../utils/ApiError');
 const { encrypt, decrypt } = require('../../utils/crypto');
-const { Doctor, Consultation, Prescription, AuditLog } = require('../models');
+const { Doctor, Consultation, Prescription, AuditLog, OutboxEvent } = require('../models');
 
 async function create(actor, consultationId, details) {
   const doctor = await Doctor.findOne({ where: { userId: actor.userId }, attributes: ['id'] });
@@ -34,6 +34,13 @@ async function create(actor, consultationId, details) {
       targetType: 'PRESCRIPTION',
       targetId: prescription.id,
       metadata: { consultationId },
+    }, { transaction });
+    await OutboxEvent.create({
+      eventType: 'PRESCRIPTION_CREATED',
+      aggregateType: 'PRESCRIPTION',
+      aggregateId: prescription.id,
+      payload: { prescriptionId: prescription.id, consultationId, patientId: consultation.patientId, doctorId: doctor.id },
+      availableAt: new Date(),
     }, { transaction });
     return { id: prescription.id, consultationId, createdAt: prescription.createdAt, details };
   });

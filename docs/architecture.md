@@ -9,6 +9,8 @@ flowchart LR
   Client[Patient, doctor, admin] --> Edge[TLS ingress / WAF / limits]
   Edge --> API[Express API replicas]
   API --> DB[(MySQL 8 primary)]
+  API --> Worker[Leased outbox worker]
+  Worker --> Consumer[Trusted idempotent webhook consumer]
   API --> Metrics[Prometheus scrape]
   API --> Logs[Structured stdout logs]
   API -. future OTLP .-> Trace[Trusted trace collector]
@@ -59,7 +61,9 @@ erDiagram
 
 Booking uses an InnoDB `READ COMMITTED` transaction, a slot row lock, unique active reservation, user-scoped idempotency row, and transactional audit. Retrying is limited to transient connection/deadlock errors, bounded exponential backoff with jitter, and idempotent calls reusing the original key. Never retry authorization, validation, or state errors. Deadlock retries are not yet implemented in the request service; the caller can safely retry with the same key after a transient failure.
 
-Consultation transitions and prescription creation lock their consultation row and enforce state and doctor ownership. External payment capture, notifications, and video-room setup must not happen inside database transactions. When those providers are added, write an outbox command in the same business transaction, process asynchronously with bounded retry and provider idempotency, and define compensations (release reservation/refund) for terminal failures. The current payments table is not a payment provider integration.
+Consultation transitions and prescription creation lock their consultation row and enforce state and doctor ownership. Booking, cancellation, status, and prescription operations append identifier-only events to `outbox_events` in the same transaction as their business state and audit event. The optional worker claims rows with `FOR UPDATE SKIP LOCKED` and a lease, delivers over HTTPS using the event UUID as an idempotency key, retries transient transport/5xx/429 failures with capped exponential full jitter, and marks exhausted/permanent failures for operator review. Run consumers idempotently and alert on pending age and terminal failures. Never put prescription text or clinical notes in event payloads.
+
+The worker is disabled unless both webhook URL and bearer token are configured. External payment capture and video-room provisioning must not run inside database transactions. When providers are added, use outbox events, provider idempotency, and compensations (release reservation/refund) for terminal failures. The current payments table is not a payment provider integration. Booking retries MySQL deadlocks and lock wait timeouts up to three attempts with bounded exponential jitter; it does not retry validation, authorization, or uniqueness errors.
 
 ## Scale and performance
 
@@ -77,6 +81,6 @@ Recommended launch objectives (not yet demonstrated): RPO <= 5 minutes using enc
 
 ## Observability
 
-Pino emits redacted JSON logs and request IDs. Prometheus exposes request totals and duration histograms plus process metrics; `/metrics` requires a bearer secret. Liveness/readiness probes are provided. Alert on 5xx rate, p95/p99 latency, DB pool saturation, deadlocks/lock waits, migration failures, audit write errors, backup age, and queue/outbox age once implemented. Do not put user identifiers, email, tokens, clinical content, or high-cardinality data in labels.
+Pino emits redacted JSON logs and request IDs. Prometheus exposes request totals and duration histograms plus process metrics; `/metrics` requires a bearer secret. Liveness/readiness probes are provided. Alert on 5xx rate, p95/p99 latency, DB pool saturation, deadlocks/lock waits, migration failures, audit write errors, backup age, pending outbox age, and terminal outbox failures. Do not put user identifiers, email, tokens, clinical content, or high-cardinality data in labels.
 
 OpenTelemetry auto-instrumentation starts before Express is loaded when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and exports OTLP/HTTP traces. Production configuration requires the endpoint; use a trusted collector, define sampling and retention, dashboards, and alerts before claiming end-to-end trace coverage. The included in-process rate limiter is per replica; production must enforce shared limits at the edge or use a distributed store.

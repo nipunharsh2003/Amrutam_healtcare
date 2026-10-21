@@ -1,7 +1,7 @@
 const dotenv = require('dotenv');
 const { z } = require('zod');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -20,6 +20,11 @@ const envSchema = z.object({
     z.string().url().optional(),
   ),
   CORS_ORIGINS: z.string().default(''),
+  OUTBOX_WEBHOOK_URL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  OUTBOX_WEBHOOK_TOKEN: z.string().min(32).optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
@@ -32,6 +37,12 @@ const parsedEnv = envSchema.superRefine((value, context) => {
   }
   if (value.NODE_ENV === 'production' && !value.CORS_ORIGINS.trim()) {
     context.addIssue({ code: 'custom', path: ['CORS_ORIGINS'], message: 'Explicit allowed origins required in production' });
+  }
+  if (Boolean(value.OUTBOX_WEBHOOK_URL) !== Boolean(value.OUTBOX_WEBHOOK_TOKEN)) {
+    context.addIssue({ code: 'custom', path: ['OUTBOX_WEBHOOK_TOKEN'], message: 'Configure both webhook URL and token, or neither' });
+  }
+  if (value.NODE_ENV === 'production' && value.OUTBOX_WEBHOOK_URL && new URL(value.OUTBOX_WEBHOOK_URL).protocol !== 'https:') {
+    context.addIssue({ code: 'custom', path: ['OUTBOX_WEBHOOK_URL'], message: 'HTTPS is required in production' });
   }
   if (value.NODE_ENV === 'test' && !value.TEST_DB_NAME) {
     context.addIssue({ code: 'custom', path: ['TEST_DB_NAME'], message: 'Required in test' });

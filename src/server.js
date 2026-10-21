@@ -5,14 +5,18 @@ const app = require('./app');
 const sequelize = require('./config/database');
 const env = require('./config/env');
 const logger = require('./utils/logger');
+const { createOutboxWorker } = require('./workers/outboxWorker');
 
 async function startServer() {
   try {
+    const outboxWorker = createOutboxWorker();
+    outboxWorker.start();
     const server = app.listen(env.PORT, () => {
       logger.info({ port: env.PORT }, 'API listening');
     });
 
     const shutdown = async () => {
+      await outboxWorker.stop();
       server.close(async (error) => {
         if (error) logger.error({ err: error }, 'HTTP server shutdown failed');
         await sequelize.close().catch((closeError) => logger.error({ err: closeError }, 'Database shutdown failed'));

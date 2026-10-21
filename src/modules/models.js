@@ -8,6 +8,7 @@ const SlotReservation = require('./consultations/slot-reservation.model');
 const Prescription = require('./prescriptions/prescription.model');
 const Payment = require('./payments/payment.model');
 const AuditLog = require('./audit/audit-log.model');
+const OutboxEvent = require('./audit/outbox-event.model');
 
 User.hasOne(Profile, { foreignKey: 'userId', as: 'profile' });
 Profile.belongsTo(User, { foreignKey: 'userId', as: 'user' });
@@ -43,4 +44,5 @@ module.exports = {
   Prescription,
   Payment,
   AuditLog,
+  OutboxEvent,
 };

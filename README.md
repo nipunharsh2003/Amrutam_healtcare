@@ -4,9 +4,9 @@ Modular monolith for telemedicine workflows using Node.js CommonJS, Express, Seq
 
 ## Scope and service limits
 
-The API implements patient registration/login and MFA, doctor search/profile and availability, booking/cancellation, consultation lifecycle, encrypted prescriptions, audit events, and admin aggregates. MySQL transactions, row locks, unique reservations, and idempotency keys protect booking writes.
+The API implements patient registration/login and MFA, doctor search/profile and availability, booking/cancellation, consultation lifecycle, encrypted prescriptions, audit events, admin aggregates, and a transactional outbox with an optional webhook worker. MySQL transactions, row locks, unique reservations, and idempotency keys protect booking writes.
 
-This repository is a production-oriented foundation, not proof that the stated 99.95% availability or p95 targets are met. Payment provider integration, external async workers/outbox delivery, production tracing export, managed key services, load validation, restore drills, and regulatory review remain launch work. See [architecture](docs/architecture.md) and [security](docs/security.md).
+This repository is a production-oriented foundation, not proof that the stated 99.95% availability or p95 targets are met. Payment provider integration, a trusted outbox consumer, production tracing export, managed key services, load validation, restore drills, and regulatory review remain launch work. See [architecture](docs/architecture.md) and [security](docs/security.md).
 
 ## Prerequisites
 
@@ -34,6 +34,8 @@ Copy-Item .env.example .env
 ```
 
 Use a fresh random 32-byte hex value for `APP_ENCRYPTION_KEY`, separate random strings (at least 32 characters) for `JWT_SECRET` and `METRICS_TOKEN`, and set a comma-separated explicit `CORS_ORIGINS` allowlist. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted OpenTelemetry Collector base URL (for example, `http://localhost:4318`). The example values are not production secrets. Never commit `.env`.
+
+To deliver outbox events, set both `OUTBOX_WEBHOOK_URL` and `OUTBOX_WEBHOOK_TOKEN` to a trusted HTTPS endpoint and a random bearer secret. Delivery is disabled when either value is missing. Consumers must deduplicate using the `Idempotency-Key` header, which is the stable outbox event ID.
 
 Install, migrate, and run:
 

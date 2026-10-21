@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const request = require('supertest');
 const bcrypt = require('bcrypt');
 const sequelize = require('../../src/config/database');
-const { User, Profile, Doctor, AvailabilitySlot, Consultation, SlotReservation, IdempotencyKey, AuditLog } = require('../../src/modules/models');
+const { User, Profile, Doctor, AvailabilitySlot, Consultation, SlotReservation, IdempotencyKey, AuditLog, OutboxEvent } = require('../../src/modules/models');
 const booking = require('../../src/modules/consultations/consultations.service');
 const auth = require('../../src/modules/auth/auth.service');
 const prescriptions = require('../../src/modules/prescriptions/prescriptions.service');
@@ -33,13 +33,14 @@ dbDescribe('MySQL booking safety', () => {
     }
     await sequelize.authenticate();
     const tables = await sequelize.getQueryInterface().showAllTables();
-    for (const table of ['users', 'doctors', 'availability_slots', 'consultations', 'slot_reservations', 'idempotency_keys']) {
+    for (const table of ['users', 'doctors', 'availability_slots', 'consultations', 'slot_reservations', 'idempotency_keys', 'outbox_events']) {
       if (!tables.includes(table)) throw new Error(`Missing migrated test table: ${table}`);
     }
   });
 
   beforeEach(async () => {
     await SlotReservation.destroy({ where: {} });
+    await OutboxEvent.destroy({ where: {} });
     await IdempotencyKey.destroy({ where: {} });
     await Consultation.destroy({ where: {} });
     await AvailabilitySlot.destroy({ where: {} });
@@ -64,6 +65,7 @@ dbDescribe('MySQL booking safety', () => {
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(await Consultation.count({ where: { slotId: slot.id } })).toBe(1);
     expect(await SlotReservation.count({ where: { slotId: slot.id } })).toBe(1);
+    expect(await OutboxEvent.count({ where: { eventType: 'CONSULTATION_BOOKED' } })).toBe(1);
   });
 
   test('public slot lookup returns verified doctor details without private account fields', async () => {
@@ -119,6 +121,7 @@ dbDescribe('MySQL booking safety', () => {
     expect(slot.status).toBe('OPEN');
     expect(await Consultation.count({ where: { slotId: slot.id } })).toBe(0);
     expect(await SlotReservation.count({ where: { slotId: slot.id } })).toBe(0);
+    expect(await OutboxEvent.count()).toBe(0);
   });
 
   test('patients cannot read another patient consultation and doctors cannot mutate another doctor consultation', async () => {

@@ -233,6 +233,28 @@ module.exports = {
       name: 'audit_event_created_idx',
     });
 
+    await queryInterface.createTable('outbox_events', {
+      id: { type: Sequelize.UUID, allowNull: false, primaryKey: true },
+      event_type: { type: Sequelize.STRING(100), allowNull: false },
+      aggregate_type: { type: Sequelize.STRING(80), allowNull: false },
+      aggregate_id: { type: Sequelize.STRING(64), allowNull: false },
+      payload: { type: Sequelize.JSON, allowNull: false },
+      status: {
+        type: Sequelize.ENUM('PENDING', 'PROCESSING', 'DELIVERED', 'FAILED'),
+        allowNull: false,
+        defaultValue: 'PENDING',
+      },
+      attempts: { type: Sequelize.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      available_at: { type: Sequelize.DATE, allowNull: false },
+      locked_at: { type: Sequelize.DATE, allowNull: true },
+      last_error_code: { type: Sequelize.STRING(40), allowNull: true },
+      created_at: { type: Sequelize.DATE, allowNull: false },
+      updated_at: { type: Sequelize.DATE, allowNull: false },
+    });
+    await queryInterface.addIndex('outbox_events', ['status', 'available_at'], {
+      name: 'outbox_delivery_idx',
+    });
+
     await queryInterface.createTable('idempotency_keys', {
       id: { type: Sequelize.UUID, allowNull: false, primaryKey: true },
       user_id: {
@@ -260,6 +282,7 @@ module.exports = {
 
   async down(queryInterface) {
     await queryInterface.dropTable('idempotency_keys');
+    await queryInterface.dropTable('outbox_events');
     await queryInterface.dropTable('audit_logs');
     await queryInterface.dropTable('payments');
     await queryInterface.dropTable('prescriptions');
